@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>RSVP Reader</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #111;
+      color: #f0f0f0;
+      font-family: 'Georgia', serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* ── Start screen ── */
+    #start-screen { text-align: center; }
+    #start-screen h1 {
+      font-size: 22px; font-weight: normal; color: #bbb;
+      margin-bottom: 10px; letter-spacing: 1px;
+    }
+    #start-screen p { font-size: 14px; color: #444; line-height: 2; }
+    #start-screen kbd {
+      background: #222; border: 1px solid #444; border-radius: 4px;
+      padding: 1px 6px; font-size: 13px; color: #888; font-family: monospace;
+    }
+
+    /* ── Reader ── */
+    #reader { display: none; flex-direction: column; align-items: center; width: 100%; }
+
+    /* ── Text preview strip ── */
+    #text-preview {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 90px;
+      overflow-y: scroll;
+      scrollbar-width: none;
+      padding: 8px 28px 6px;
+      scroll-behavior: smooth;
+      border-bottom: 1px solid #191919;
+    }
+    #text-preview::-webkit-scrollbar { display: none; }
+
+    .pv-line    { display: block; line-height: 1.8; }
+    .pv-h1      { font-family: 'Georgia', serif; font-size: 12px; font-weight: bold;
+                  letter-spacing: 0.4px; margin-top: 4px; }
+    .pv-h2      { font-family: 'Georgia', serif; font-size: 11px; font-weight: bold; margin-top: 3px; }
+    .pv-h3      { font-family: 'Georgia', serif; font-size: 10.5px; font-weight: bold; }
+    .pv-bullet  { font-family: 'Courier New', monospace; font-size: 9.5px; padding-left: 14px; }
+    .pv-ordered { font-family: 'Courier New', monospace; font-size: 9.5px; padding-left: 14px; }
+    .pv-text    { font-family: 'Courier New', monospace; font-size: 9.5px; }
+    .pv-prefix  { color: #2e2e2e; }
+
+    .tp-break   { display: block; height: 6px; }
+    .tp-word    { display: inline; }
+    .tp-pending { color: #1d1d1d; }
+    .tp-done    { color: #3a2828; }
+    .tp-current { color: #e84040; font-weight: bold; }
+
+    .pv-h1 .tp-pending,
+    .pv-h2 .tp-pending,
+    .pv-h3 .tp-pending { color: #201600; }
+    .pv-h1 .tp-done,
+    .pv-h2 .tp-done,
+    .pv-h3 .tp-done    { color: #5c3d00; }
+    .pv-h1 .tp-current,
+    .pv-h2 .tp-current,
+    .pv-h3 .tp-current { color: #f0b030; font-weight: bold; }
+
+    /* ── ORP stage ── */
+    #stage {
+      position: relative;
+      display: flex; align-items: center; justify-content: center;
+      padding: 16px 20px;
+      border-radius: 10px;
+      transition: background 0.25s;
+    }
+    #stage.mode-h1,
+    #stage.mode-h2,
+    #stage.mode-h3            { background: rgba(240,176,48,0.05); }
+    #stage.mode-h1 #focus-line,
+    #stage.mode-h2 #focus-line,
+    #stage.mode-h3 #focus-line { background: #f0b030; }
+    #stage.mode-h1 #w-focus,
+    #stage.mode-h2 #w-focus,
+    #stage.mode-h3 #w-focus   { color: #f0b030; }
+    #stage.mode-punct #focus-line { opacity: 0.15; }
+    #stage.mode-punct #w-focus    { color: #555; }
+    #stage.mode-break #focus-line { opacity: 0; }
+    #stage.mode-break #w-focus    { color: #222; letter-spacing: 10px; }
+
+    #focus-line {
+      position: absolute;
+      top: -4px; bottom: 0;
+      left: 50%; transform: translateX(-50%);
+      width: 2px; background: #e84040; border-radius: 2px;
+      opacity: 0.6; pointer-events: none;
+      transition: background 0.25s, opacity 0.25s;
+    }
+    #orp-word {
+      display: flex; align-items: baseline;
+      font-family: 'Courier New', monospace;
+      font-size: 52px; line-height: 1.2;
+    }
+    #w-left  { text-align: right; color: #e8e8e8; min-width: 220px; }
+    #w-focus { color: #e84040; font-weight: bold; transition: color 0.25s; }
+    #w-right { text-align: left;  color: #e8e8e8; min-width: 220px; }
+
+    /* ── Controls ── */
+    #controls {
+      position: fixed; bottom: 36px;
+      display: flex; align-items: center; gap: 14px;
+    }
+    .ctrl-sep {
+      width: 1px; height: 20px; background: #2a2a2a;
+    }
+    button {
+      background: none; border: 1px solid #333; color: #888;
+      width: 36px; height: 36px; border-radius: 50%; cursor: pointer;
+      font-size: 15px; display: flex; align-items: center; justify-content: center;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    button:hover { border-color: #666; color: #ddd; }
+    button.danger       { border-color: #5a2020; color: #a04040; }
+    button.danger:hover { border-color: #c03030; color: #e84040; }
+    button.confirm      { border-color: #c03030; color: #e84040; animation: pulse 0.6s infinite alternate; }
+    @keyframes pulse { from { opacity: 1; } to { opacity: 0.5; } }
+
+    #wpm-wrap { display: flex; align-items: center; gap: 10px; }
+    #wpm-label { font-size: 13px; color: #555; font-family: monospace; min-width: 56px; text-align: right; }
+    input[type="range"] {
+      -webkit-appearance: none; width: 110px; height: 3px;
+      background: #333; border-radius: 2px; outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 14px; height: 14px;
+      border-radius: 50%; background: #e84040; cursor: pointer;
+    }
+
+    /* ── Hint strip ── */
+    #hints { position: fixed; bottom: 10px; font-size: 11px; color: #252525; font-family: monospace; }
+  </style>
+</head>
+<body>
+
+  <div id="start-screen">
+    <h1>RSVP Reader</h1>
+    <p>
+      Press <kbd>⌘V</kbd> to paste text — paste again to append more<br>
+      <kbd>Space</kbd> pause · <kbd>←</kbd> back · <kbd>↑</kbd><kbd>↓</kbd> speed
+    </p>
+  </div>
+
+  <div id="reader">
+    <div id="text-preview"></div>
+
+    <div id="stage">
+      <div id="focus-line"></div>
+      <div id="orp-word">
+        <span id="w-left"></span>
+        <span id="w-focus"></span>
+        <span id="w-right"></span>
+      </div>
+    </div>
+
+    <div id="controls">
+      <button id="btn-restart" title="Restart article">↺</button>
+      <div id="wpm-wrap">
+        <span id="wpm-label">300 wpm</span>
+        <input type="range" id="wpm-slider" min="100" max="800" value="300" step="10">
+      </div>
+      <button id="btn-pause" title="Pause / Resume">⏸</button>
+      <div class="ctrl-sep"></div>
+      <button id="btn-export" title="Export article as .md">↓</button>
+      <button id="btn-clear" class="danger" title="Clear article">✕</button>
+    </div>
+
+    <div id="hints">space · ← back · ↑↓ speed · ⌘V append · ↓ export · ✕ clear</div>
+  </div>
+
+  <script>
+    // ── Article state ──────────────────────────────────────
+    let articleText  = '';   // accumulated raw text (source of truth)
+    let tokens       = [];
+    let idx          = 0;
+    let wpm          = 300;
+    let paused       = false;
+    let timer        = null;
+    let running      = false;
+    let lastShownIdx = -1;
+    let clearPending = false;
+    let clearClock   = null;
+
+    // ── Parser ─────────────────────────────────────────────
+    function parseText(raw) {
+      const result = [];
+      const groups = [];
+      let prevBlank = false;
+
+      for (const rawLine of raw.split('\n')) {
+        const trimmed = rawLine.trim();
+
+        if (!trimmed) { prevBlank = true; continue; }
+
+        if (prevBlank && result.length > 0) {
+          const t = { text: '···', type: 'para-break', lineType: 'break', tidx: result.length };
+          result.push(t);
+          groups.push({ lineType: 'break', prefix: '', tokens: [t] });
+        }
+        prevBlank = false;
+
+        let lineType = 'text', content = trimmed, prefix = '';
+        if      (/^### /.test(trimmed)) { lineType = 'h3'; content = trimmed.slice(4); }
+        else if (/^## /.test(trimmed))  { lineType = 'h2'; content = trimmed.slice(3); }
+        else if (/^# /.test(trimmed))   { lineType = 'h1'; content = trimmed.slice(2); }
+        else if (/^[-*•] /.test(trimmed)) {
+          lineType = 'bullet'; content = trimmed.slice(2); prefix = '• ';
+        } else if (/^\d+[.)]\s+/.test(trimmed)) {
+          const m = trimmed.match(/^(\d+[.)]\s+)/);
+          lineType = 'ordered'; content = trimmed.slice(m[1].length); prefix = m[1];
+        }
+
+        const group = { lineType, prefix, tokens: [] };
+
+        for (const word of content.split(/\s+/).filter(Boolean)) {
+          const m = word.match(/^(.{3,})([.!?]+)$/);
+          const isAbbrev = /^[A-Z][a-z]?\.$/.test(word) || /^[A-Z]{2,4}\.$/.test(word);
+          if (m && !isAbbrev) {
+            const t1 = { text: m[1], type: 'word',  lineType, tidx: result.length };
+            result.push(t1); group.tokens.push(t1);
+            const t2 = { text: m[2], type: 'punct', lineType, tidx: result.length };
+            result.push(t2); group.tokens.push(t2);
+          } else {
+            const t = { text: word, type: 'word', lineType, tidx: result.length };
+            result.push(t); group.tokens.push(t);
+          }
+        }
+
+        if (group.tokens.length) groups.push(group);
+      }
+
+      return { tokens: result, groups };
+    }
+
+    // ── ORP & timing ───────────────────────────────────────
+    function orpIndex(word) {
+      const n = word.replace(/\W/g, '').length;
+      if (n <= 1) return 0; if (n <= 5) return 1;
+      if (n <= 9) return 2; if (n <= 13) return 3;
+      return 4;
+    }
+
+    function delay(token) {
+      const base = 60000 / wpm;
+      if (token.type === 'para-break') return Math.max(base * 5, 1800);
+      if (token.type === 'punct')      return base * 3.2;
+      const w = token.text;
+      if (/[,;:]$/.test(w)) return base * 1.9;
+      if (/[–—]/.test(w))   return base * 1.5;
+      if (w.length > 9)     return base * 1.4;
+      if (w.length > 6)     return base * 1.15;
+      return base;
+    }
+
+    // ── Preview helpers ─────────────────────────────────────
+    function setWordClass(i, cls) {
+      const el = document.getElementById(`tp-${i}`);
+      if (!el) return;
+      const base = (tokens[i] && tokens[i].type === 'para-break') ? 'tp-break' : 'tp-word';
+      el.className = `${base} ${cls}`;
+    }
+
+    function scrollPreview(i) {
+      const preview = document.getElementById('text-preview');
+      const el = document.getElementById(`tp-${i}`);
+      if (!el || !preview) return;
+      const elTop = el.offsetTop, elBot = elTop + el.offsetHeight;
+      const pTop  = preview.scrollTop, pBot = pTop + preview.clientHeight;
+      if (elBot > pBot) preview.scrollTop = elTop - preview.clientHeight / 2;
+      else if (elTop < pTop) preview.scrollTop = elTop;
+    }
+
+    function resetAllPending() {
+      document.getElementById('text-preview')
+        .querySelectorAll('[id^="tp-"]')
+        .forEach(el => {
+          const i = parseInt(el.id.slice(3), 10);
+          const base = (tokens[i] && tokens[i].type === 'para-break') ? 'tp-break' : 'tp-word';
+          el.className = `${base} tp-pending`;
+        });
+      document.getElementById('text-preview').scrollTop = 0;
+      lastShownIdx = -1;
+    }
+
+    function resetPendingFrom(fromIdx) {
+      for (let i = fromIdx; i <= lastShownIdx; i++) setWordClass(i, 'tp-pending');
+      lastShownIdx = fromIdx - 1;
+    }
+
+    // Restore preview colors after a rebuild (e.g. after append)
+    function restorePreviewState() {
+      for (let i = 0; i < lastShownIdx; i++) setWordClass(i, 'tp-done');
+      if (lastShownIdx >= 0) setWordClass(lastShownIdx, 'tp-current');
+    }
+
+    function buildPreview(groups) {
+      const preview = document.getElementById('text-preview');
+      preview.innerHTML = '';
+
+      for (const group of groups) {
+        if (group.lineType === 'break') {
+          const br = document.createElement('span');
+          br.id = `tp-${group.tokens[0].tidx}`;
+          br.className = 'tp-break tp-pending';
+          preview.appendChild(br);
+          continue;
+        }
+
+        const line = document.createElement('span');
+        line.className = `pv-line pv-${group.lineType}`;
+
+        if (group.prefix) {
+          const pre = document.createElement('span');
+          pre.className = 'pv-prefix';
+          pre.textContent = group.prefix;
+          line.appendChild(pre);
+        }
+
+        for (const token of group.tokens) {
+          const span = document.createElement('span');
+          span.id = `tp-${token.tidx}`;
+          span.className = 'tp-word tp-pending';
+          span.textContent = token.text + ' ';
+          line.appendChild(span);
+        }
+
+        preview.appendChild(line);
+      }
+    }
+
+    // ── ORP display ─────────────────────────────────────────
+    function show(token) {
+      const stage = document.getElementById('stage');
+      if (token.type === 'para-break') {
+        stage.className = 'mode-break';
+        document.getElementById('w-left').textContent  = '';
+        document.getElementById('w-focus').textContent = '···';
+        document.getElementById('w-right').textContent = '';
+      } else if (token.type === 'punct') {
+        stage.className = 'mode-punct';
+        document.getElementById('w-left').textContent  = '';
+        document.getElementById('w-focus').textContent = token.text;
+        document.getElementById('w-right').textContent = '';
+      } else {
+        const lt = token.lineType;
+        stage.className = ['h1','h2','h3'].includes(lt) ? `mode-${lt}` : '';
+        const i = orpIndex(token.text);
+        document.getElementById('w-left').textContent  = token.text.slice(0, i);
+        document.getElementById('w-focus').textContent = token.text.slice(i, i + 1);
+        document.getElementById('w-right').textContent = token.text.slice(i + 1);
+      }
+
+      if (lastShownIdx >= 0) setWordClass(lastShownIdx, 'tp-done');
+      setWordClass(idx, 'tp-current');
+      scrollPreview(idx);
+      lastShownIdx = idx;
+    }
+
+    // ── Playback ────────────────────────────────────────────
+    function tick() {
+      if (paused || idx >= tokens.length) {
+        if (idx >= tokens.length) {
+          if (lastShownIdx >= 0) setWordClass(lastShownIdx, 'tp-done');
+          document.getElementById('btn-pause').textContent = '↺';
+        }
+        return;
+      }
+      const token = tokens[idx];
+      show(token);
+      idx++;
+      timer = setTimeout(tick, delay(token));
+    }
+
+    // ── Append text to article ──────────────────────────────
+    function appendText(newText) {
+      newText = newText.trim();
+      if (!newText) return;
+
+      const wasEmpty  = !articleText.trim();
+      const wasDone   = running && idx >= tokens.length;
+      const wasRunning = running && !paused && !wasDone;
+
+      // Separate pastes with a blank line so they parse as distinct paragraphs
+      if (articleText && !articleText.endsWith('\n\n')) {
+        articleText += articleText.endsWith('\n') ? '\n' : '\n\n';
+      }
+      articleText += newText;
+
+      const parsed = parseText(articleText);
+      tokens = parsed.tokens;
+
+      if (wasEmpty) {
+        idx          = 0;
+        paused       = false;
+        running      = true;
+        lastShownIdx = -1;
+        buildPreview(parsed.groups);
+        document.getElementById('start-screen').style.display = 'none';
+        document.getElementById('reader').style.display = 'flex';
+        document.getElementById('btn-pause').textContent = '⏸';
+        document.getElementById('stage').className = '';
+        clearTimeout(timer);
+        tick();
+      } else {
+        // Rebuild preview, restore progress state
+        buildPreview(parsed.groups);
+        restorePreviewState();
+        if (lastShownIdx >= 0) scrollPreview(lastShownIdx);
+
+        if (wasDone) {
+          // Was finished — auto-continue into new content
+          paused = false;
+          document.getElementById('btn-pause').textContent = '⏸';
+          clearTimeout(timer);
+          tick();
+        }
+        // If playing: timer continues naturally since idx < tokens.length now
+        // If paused: stays paused, user resumes
+      }
+    }
+
+    // ── Restart from beginning ──────────────────────────────
+    function restart() {
+      if (!running) return;
+      clearTimeout(timer);
+      idx    = 0;
+      paused = false;
+      resetAllPending();
+      document.getElementById('stage').className = '';
+      document.getElementById('btn-pause').textContent = '⏸';
+      tick();
+    }
+
+    function togglePause() {
+      if (!running) return;
+      if (idx >= tokens.length) { restart(); return; }
+      paused = !paused;
+      document.getElementById('btn-pause').textContent = paused ? '▶' : '⏸';
+      if (!paused) tick();
+    }
+
+    function stepBack(n = 6) {
+      if (!running) return;
+      const newIdx = Math.max(0, idx - n);
+      resetPendingFrom(newIdx);
+      idx = newIdx;
+      if (paused) { show(tokens[idx]); return; }
+      clearTimeout(timer);
+      tick();
+    }
+
+    function setWPM(v) {
+      wpm = Math.min(800, Math.max(100, v));
+      document.getElementById('wpm-slider').value = wpm;
+      document.getElementById('wpm-label').textContent = `${wpm} wpm`;
+    }
+
+    // ── Export .md ──────────────────────────────────────────
+    function exportMD() {
+      if (!articleText.trim()) return;
+      const blob = new Blob([articleText], { type: 'text/markdown' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = 'article.md';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    // ── Clear article (double-click to confirm) ─────────────
+    function handleClear() {
+      const btn = document.getElementById('btn-clear');
+      if (!clearPending) {
+        clearPending = true;
+        btn.textContent = '✕?';
+        btn.classList.add('confirm');
+        clearClock = setTimeout(() => {
+          clearPending = false;
+          btn.textContent = '✕';
+          btn.classList.remove('confirm');
+        }, 2000);
+      } else {
+        clearTimeout(clearClock);
+        clearPending = false;
+        btn.textContent = '✕';
+        btn.classList.remove('confirm');
+        clearArticle();
+      }
+    }
+
+    function clearArticle() {
+      clearTimeout(timer);
+      articleText  = '';
+      tokens       = [];
+      idx          = 0;
+      paused       = false;
+      running      = false;
+      lastShownIdx = -1;
+      document.getElementById('text-preview').innerHTML = '';
+      document.getElementById('start-screen').style.display = 'block';
+      document.getElementById('reader').style.display = 'none';
+      document.getElementById('stage').className = '';
+      document.getElementById('w-left').textContent  = '';
+      document.getElementById('w-focus').textContent = '';
+      document.getElementById('w-right').textContent = '';
+    }
+
+    // ── Events ──────────────────────────────────────────────
+    document.addEventListener('paste', e => {
+      const text = e.clipboardData?.getData('text/plain') ?? '';
+      if (text.trim()) appendText(text);
+    });
+
+    document.addEventListener('keydown', e => {
+      switch (e.code) {
+        case 'Space':     e.preventDefault(); togglePause();    break;
+        case 'ArrowLeft': e.preventDefault(); stepBack(6);      break;
+        case 'ArrowUp':   e.preventDefault(); setWPM(wpm + 25); break;
+        case 'ArrowDown': e.preventDefault(); setWPM(wpm - 25); break;
+      }
+    });
+
+    document.getElementById('btn-pause').addEventListener('click', togglePause);
+    document.getElementById('btn-restart').addEventListener('click', restart);
+    document.getElementById('btn-export').addEventListener('click', exportMD);
+    document.getElementById('btn-clear').addEventListener('click', handleClear);
+    document.getElementById('wpm-slider').addEventListener('input', e => {
+      setWPM(parseInt(e.target.value, 10));
+    });
+  </script>
+</body>
+</html>
